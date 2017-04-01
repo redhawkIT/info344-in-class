@@ -15,8 +15,10 @@ package main
 //of its exported types and functions as properties and
 //methods of that object. See below for examples.
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -30,8 +32,88 @@ type zip struct {
 	State string `json:"state"`
 }
 
+//zipSlice is a slice of pointers to zip structs (*zip)
 type zipSlice []*zip
+
+//zipIndex is a map of string to zipSlice
 type zipIndex map[string]zipSlice
+
+//loadZipsFromCSV loads zip records from a CSV file.
+//This expects that the zip code is in position 0,
+//city is in position 3, and state is in position 6.
+func loadZipsFromCSV(filePath string) (zipSlice, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("error opening zips file: %v", err)
+	}
+
+	//create a new CSV reader, which can read and parse
+	//a stream of CSV data, one line at a time
+	reader := csv.NewReader(f)
+
+	//the first record is really the column names,
+	//which we don't need, so just read and discard them
+	_, err = reader.Read()
+	if err != nil {
+		return nil, fmt.Errorf("error reading CSV field names: %v", err)
+	}
+
+	//make a zipSlice, and preset capacity so that it
+	//doesn't have to reallocate as it loads
+	zips := make(zipSlice, 0, 43000)
+
+	//read lines until we reach the end of the file
+	//the .Read() method will return io.EOF when
+	//it reaches the end of the file
+	for {
+		//read the next record
+		record, err := reader.Read()
+		//if we reached the end of the file,
+		//return the zipSlice and no error
+		if err == io.EOF {
+			return zips, nil
+		}
+		//if we encountered some other error,
+		//return it
+		if err != nil {
+			return nil, fmt.Errorf("error loading zips from CSV: %v", err)
+		}
+
+		//create and populate a new *zip
+		z := &zip{
+			Zip:   record[0],
+			City:  record[3],
+			State: record[6],
+		}
+
+		//append to the zipSlice
+		zips = append(zips, z)
+	}
+}
+
+//loadZipsFromJSON loads the zip codes from a JSON file
+func loadZipsFromJSON(filePath string) (zipSlice, error) {
+	//open the file and report any errors
+	f, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("error opening zips file: %v", err)
+	}
+
+	//make a zip slice with enough capacity to load all
+	//of the zip records without having to reallocate
+	zips := make(zipSlice, 0, 43000)
+
+	//create a streaming JSON decoder
+	decoder := json.NewDecoder(f)
+	//deocde the JSON file into the zipSlice.
+	//we must pass the address of the zipSlice here
+	//as the decoder might have to reallocate if
+	//there is more data than our slice's capacity.
+	if err := decoder.Decode(&zips); err != nil {
+		return nil, fmt.Errorf("error decoding zips from json: %v", err)
+	}
+	return zips, nil
+}
 
 //helloHandler handles requests made to the /hello path.
 //Every HTTP handler has this same signature:
@@ -99,22 +181,23 @@ func main() {
 		log.Fatal("please set ADDR environment variable")
 	}
 
-	f, err := os.Open("../data/zips.json")
+	//load the zip codes from either the JSON or CSV files
+	//comment/uncomment the following two lines to switch
+	//between them
+
+	//zips, err := loadZipsFromJSON("../data/zips.json")
+	zips, err := loadZipsFromCSV("../data/zips.csv")
+
+	//if there was an error loading the zips, report it an exit
 	if err != nil {
-		log.Fatal("error opening zips file: " + err.Error())
+		log.Fatal("error loading zips: " + err.Error())
 	}
 
-	zips := make(zipSlice, 0, 43000)
-	decoder := json.NewDecoder(f)
-	if err := decoder.Decode(&zips); err != nil {
-		log.Fatal("error decoding zips json: " + err.Error())
-	}
 	fmt.Printf("loaded %d zips\n", len(zips))
 
+	//build a map of lower-cased city name
+	//to the zips in that city
 	zi := make(zipIndex)
-
-	//build a map of city name (lower-case)
-	//to a zipSlice ( []*zip )
 	for _, z := range zips {
 		lower := strings.ToLower(z.City)
 		zi[lower] = append(zi[lower], z)
@@ -128,6 +211,10 @@ func main() {
 	//call our helloHandler function.
 	http.HandleFunc("/hello", helloHandler)
 
+	//Register the zipsForCityHandler for any request
+	//path that *starts with* `/zips/city/`
+	//the trailing slash will match anything that starts
+	//with that path
 	http.HandleFunc("/zips/city/", zi.zipsForCityHandler)
 
 	//Let the client know what address the server is
