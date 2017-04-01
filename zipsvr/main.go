@@ -80,6 +80,9 @@ func loadZipsFromCSV(filePath string) (zipSlice, error) {
 		}
 
 		//create and populate a new *zip
+		//this syntax accomplishes the same thing
+		//as using new() followed by field assignments
+		//but does all of that in one statement
 		z := &zip{
 			Zip:   record[0],
 			City:  record[3],
@@ -109,6 +112,10 @@ func loadZipsFromJSON(filePath string) (zipSlice, error) {
 	//we must pass the address of the zipSlice here
 	//as the decoder might have to reallocate if
 	//there is more data than our slice's capacity.
+	//Note that the JSON decoder does something similar
+	//to the loadZipsFromCSV function above, but it uses
+	//reflection to create and populate the individual
+	//zip structs before appending them to the slice.
 	if err := decoder.Decode(&zips); err != nil {
 		return nil, fmt.Errorf("error decoding zips from json: %v", err)
 	}
